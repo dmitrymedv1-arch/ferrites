@@ -731,10 +731,16 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
         plt.tight_layout()
         return fig
     
+    clean_df = clean_df.reset_index(drop=True)
+    
     x_vals = clean_df[x_col].values
     y_vals = clean_df[y_col].values
     size_vals = clean_df[size_col].values
     color_vals = clean_df[color_col].values
+    
+    # Double-check lengths match
+    assert len(x_vals) == len(y_vals) == len(size_vals) == len(color_vals), \
+        f"Length mismatch: x={len(x_vals)}, y={len(y_vals)}, size={len(size_vals)}, color={len(color_vals)}"
     
     fig, ax = plt.subplots(figsize=(12, 8))
     
