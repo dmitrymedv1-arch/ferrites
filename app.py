@@ -732,6 +732,12 @@ def create_property_map(df, x_param, y_param, z_param, title):
     z_vals = z_vals.flatten()
     
     # Remove any remaining NaN
+    min_len = min(len(x_vals), len(y_vals), len(z_vals))
+    x_vals = x_vals[:min_len]
+    y_vals = y_vals[:min_len]
+    z_vals = z_vals[:min_len]
+    
+    # Теперь создаём маску для удаления NaN
     valid_mask = ~(np.isnan(x_vals) | np.isnan(y_vals) | np.isnan(z_vals))
     x_vals = x_vals[valid_mask]
     y_vals = y_vals[valid_mask]
