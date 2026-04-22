@@ -638,14 +638,14 @@ def train_prediction_models(df_features, fast_mode=True):
         if len(y_clean) < 5:
             continue
         
-        # Синхронизируем X_scaled с y_clean
         y_indices = y_clean.index
-        X_scaled_sync = X_scaled[df_valid.index.get_indexer(y_indices)]
+        valid_positions = [df_valid.index.get_loc(idx) for idx in y_indices]
+        X_scaled_sync = X_scaled[valid_positions]
         y = y_clean.values
         
-        # Skip if too few unique values or too few samples
-        if y.nunique() < 5 or y.count() < 10:
-            st.warning(f"Skipping {target_name}: insufficient data ({y.count()} samples, {y.nunique()} unique values)")
+        # Skip if too few unique values or too few samples (используем numpy/pandas методы)
+        if len(np.unique(y)) < 5 or len(y) < 10:
+            st.warning(f"Skipping {target_name}: insufficient data ({len(y)} samples, {len(np.unique(y))} unique values)")
             continue
         
         # XGBoost model (primary)
