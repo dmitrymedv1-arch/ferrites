@@ -634,7 +634,14 @@ def train_prediction_models(df_features, fast_mode=True):
         if target_key not in df_valid.columns:
             continue
         
-        y = df_valid[target_key].fillna(0)
+        y_clean = df_valid[target_key].dropna()
+        if len(y_clean) < 5:
+            continue
+        
+        # Синхронизируем X_scaled с y_clean
+        y_indices = y_clean.index
+        X_scaled_sync = X_scaled[df_valid.index.get_indexer(y_indices)]
+        y = y_clean.values
         
         # Skip if too few unique values or too few samples
         if y.nunique() < 5 or y.count() < 10:
