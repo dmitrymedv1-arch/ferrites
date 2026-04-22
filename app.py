@@ -734,11 +734,11 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
     # Reset index to ensure alignment and extract values
     clean_df = clean_df.reset_index(drop=True)
     
-    # Extract all values as numpy arrays
-    x_vals_raw = clean_df[x_col].values
-    y_vals_raw = clean_df[y_col].values
-    size_vals_raw = clean_df[size_col].values
-    color_vals_raw = clean_df[color_col].values
+    # Extract all values as numpy arrays and force them to be 1D
+    x_vals_raw = np.ravel(clean_df[x_col].values)
+    y_vals_raw = np.ravel(clean_df[y_col].values)
+    size_vals_raw = np.ravel(clean_df[size_col].values)
+    color_vals_raw = np.ravel(clean_df[color_col].values)
     
     # Find the minimum length among all arrays to ensure they match
     min_len = min(len(x_vals_raw), len(y_vals_raw), len(size_vals_raw), len(color_vals_raw))
@@ -748,6 +748,12 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
     y_vals = y_vals_raw[:min_len]
     size_vals = size_vals_raw[:min_len]
     color_vals = color_vals_raw[:min_len]
+    
+    # Convert to float and ensure 1D
+    x_vals = np.asarray(x_vals, dtype=float).flatten()
+    y_vals = np.asarray(y_vals, dtype=float).flatten()
+    size_vals = np.asarray(size_vals, dtype=float).flatten()
+    color_vals = np.asarray(color_vals, dtype=float).flatten()
     
     # Additional check: remove any NaN values that might have survived
     valid_mask = ~(np.isnan(x_vals) | np.isnan(y_vals) | np.isnan(size_vals) | np.isnan(color_vals))
@@ -770,19 +776,9 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
     # Create 2D histogram for heatmap background (with error handling)
     try:
         if len(x_vals) >= 10 and len(y_vals) >= 10:
-            # Ensure arrays are 1D and have same length
-            x_vals_clean = x_vals[~np.isnan(x_vals)]
-            y_vals_clean = y_vals[~np.isnan(y_vals)]
-            
-            # Trim to same length if needed
-            min_len_clean = min(len(x_vals_clean), len(y_vals_clean))
-            if min_len_clean >= 10:
-                x_vals_clean = x_vals_clean[:min_len_clean]
-                y_vals_clean = y_vals_clean[:min_len_clean]
-                
-                hb = ax.hexbin(x_vals_clean, y_vals_clean, gridsize=20, 
-                              cmap='Blues', alpha=0.3, mincnt=1)
-                plt.colorbar(hb, ax=ax, label='Data density')
+            hb = ax.hexbin(x_vals, y_vals, gridsize=20, 
+                          cmap='Blues', alpha=0.3, mincnt=1)
+            plt.colorbar(hb, ax=ax, label='Data density')
     except Exception as e:
         # Silently continue without hexbin
         pass
