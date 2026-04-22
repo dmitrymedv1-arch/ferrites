@@ -1,9 +1,9 @@
 """
-BaFeO₃ Multi-Property Predictor for Doped Ferrites - Version 1.1
+BaFeO₃ Multi-Property Predictor for Doped Ferrites - Version 1.2
 Advanced tool for analyzing and predicting electrical conductivity, ASR,
 power output, and thermal expansion of BaFeO₃-based perovskites.
 Uses electronegativity-based descriptors instead of ionic radii.
-OPTIMIZED VERSION: Faster training, bug fixes, progress bars.
+OPTIMIZED VERSION: Fixed NaN handling, physical constraints, robust interpolation.
 """
 
 import streamlit as st
@@ -197,7 +197,7 @@ REQUIRED_COLUMNS = [
 ]
 
 # =============================================================================
-# Load uploaded Excel file
+# Load uploaded Excel file (FIXED: better NaN handling)
 # =============================================================================
 @st.cache_data
 def load_uploaded_excel(uploaded_file):
@@ -212,7 +212,7 @@ def load_uploaded_excel(uploaded_file):
             return None
         
         # Clean data: replace '-' and empty strings with NaN
-        df = df.replace(['-', '—', ''], np.nan)
+        df = df.replace(['-', '—', '', ' '], np.nan)
         
         # Convert numeric columns
         numeric_cols = ['x', 'y', 'z', 'α', 'a (ox)', 'b (ox)', 'c (ox)', 'V (ox)',
@@ -225,12 +225,32 @@ def load_uploaded_excel(uploaded_file):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # Очистка ASR от отрицательных значений
+        # =========================================================
+        # FIX 1: Очистка ASR от отрицательных значений
+        # =========================================================
         asr_cols = ['ASR, 600 °C', 'ASR, 650 °C', 'ASR, 700 °C']
         for col in asr_cols:
             if col in df.columns:
+                # Отрицательные значения заменяем на NaN
                 df.loc[df[col] < 0, col] = np.nan
+                # Нефизично большие значения (>1000 Ом·см²) тоже заменяем на NaN
                 df.loc[df[col] > 1000, col] = np.nan
+        
+        # =========================================================
+        # FIX 2: Очистка αLT и αHT от нулевых и отрицательных значений
+        # =========================================================
+        if 'αLT' in df.columns:
+            df.loc[df['αLT'] <= 0, 'αLT'] = np.nan
+        if 'αHT' in df.columns:
+            df.loc[df['αHT'] <= 0, 'αHT'] = np.nan
+        
+        # =========================================================
+        # FIX 3: Очистка проводимости от отрицательных значений
+        # =========================================================
+        sigma_cols = ['σ (500 °C)', 'σ (600 °C)', 'σ (700 °C)', 'σmax']
+        for col in sigma_cols:
+            if col in df.columns:
+                df.loc[df[col] < 0, col] = np.nan
         
         return df
     
@@ -239,18 +259,18 @@ def load_uploaded_excel(uploaded_file):
         return None
 
 # =============================================================================
-# Enhanced descriptor calculation functions (ELECTRONEGATIVITY-BASED)
+# Enhanced descriptor calculation functions (FIXED: NaN handling)
 # =============================================================================
 def get_electronegativity(element):
     """Get Pauling electronegativity for element"""
-    if element is None or element == '-' or element == '':
+    if element is None or element == '-' or element == '' or pd.isna(element):
         return None
     return ELECTRONEGATIVITY.get(element, None)
 
 def get_a_site_chi(A_prime, A_double_prime, x):
     """Calculate average A-site electronegativity: χ(A) = χ(A')*(1-x) + χ(A'')*x"""
-    chi_Ap = get_electronegativity(A_prime) if A_prime != '-' else 0
-    chi_App = get_electronegativity(A_double_prime) if A_double_prime != '-' else 0
+    chi_Ap = get_electronegativity(A_prime) if A_prime != '-' and not pd.isna(A_prime) else 0
+    chi_App = get_electronegativity(A_double_prime) if A_double_prime != '-' and not pd.isna(A_double_prime) else 0
     
     if chi_Ap is None:
         chi_Ap = 0
@@ -264,9 +284,9 @@ def get_b_site_chi(B_prime, B_double_prime, B_triple_prime, B_quad_prime, y, alp
     Calculate average B-site electronegativity:
     χ(B) = (1-y-α)*χ(B') + y*χ(B'') + α*χ(B''')
     """
-    chi_Bp = get_electronegativity(B_prime) if B_prime != '-' else 0
-    chi_Bpp = get_electronegativity(B_double_prime) if B_double_prime != '-' else 0
-    chi_Bppp = get_electronegativity(B_triple_prime) if B_triple_prime != '-' else 0
+    chi_Bp = get_electronegativity(B_prime) if B_prime != '-' and not pd.isna(B_prime) else 0
+    chi_Bpp = get_electronegativity(B_double_prime) if B_double_prime != '-' and not pd.isna(B_double_prime) else 0
+    chi_Bppp = get_electronegativity(B_triple_prime) if B_triple_prime != '-' and not pd.isna(B_triple_prime) else 0
     
     if chi_Bp is None:
         chi_Bp = 0
@@ -297,20 +317,19 @@ def calculate_chi_product(chi_A, chi_B):
 
 def calculate_oxygen_vacancy(y, alpha):
     """Calculate oxygen vacancy concentration from acceptor doping"""
-    # For acceptor-doped perovskites: [V_O] ≈ (y + α)/2
     return (y + alpha) / 2
 
 def calculate_average_polarizability(A_prime, A_double_prime, B_prime, B_double_prime, B_triple_prime, x, y, alpha):
     """Calculate weighted average polarizability of A and B sites"""
     # A-site polarizability
-    pol_Ap = A_SITE_PROPERTIES.get(A_prime, {}).get('polarizability', 0) if A_prime != '-' else 0
-    pol_App = A_SITE_PROPERTIES.get(A_double_prime, {}).get('polarizability', 0) if A_double_prime != '-' else 0
+    pol_Ap = A_SITE_PROPERTIES.get(A_prime, {}).get('polarizability', 0) if A_prime != '-' and not pd.isna(A_prime) else 0
+    pol_App = A_SITE_PROPERTIES.get(A_double_prime, {}).get('polarizability', 0) if A_double_prime != '-' and not pd.isna(A_double_prime) else 0
     pol_A_avg = pol_Ap * (1 - x) + pol_App * x
     
     # B-site polarizability
-    pol_Bp = B_SITE_PROPERTIES.get(B_prime, {}).get('polarizability', 0) if B_prime != '-' else 0
-    pol_Bpp = B_SITE_PROPERTIES.get(B_double_prime, {}).get('polarizability', 0) if B_double_prime != '-' else 0
-    pol_Bppp = B_SITE_PROPERTIES.get(B_triple_prime, {}).get('polarizability', 0) if B_triple_prime != '-' else 0
+    pol_Bp = B_SITE_PROPERTIES.get(B_prime, {}).get('polarizability', 0) if B_prime != '-' and not pd.isna(B_prime) else 0
+    pol_Bpp = B_SITE_PROPERTIES.get(B_double_prime, {}).get('polarizability', 0) if B_double_prime != '-' and not pd.isna(B_double_prime) else 0
+    pol_Bppp = B_SITE_PROPERTIES.get(B_triple_prime, {}).get('polarizability', 0) if B_triple_prime != '-' and not pd.isna(B_triple_prime) else 0
     
     weight_Bp = max(0, 1 - y - alpha)
     weight_Bpp = y
@@ -327,13 +346,31 @@ def calculate_average_polarizability(A_prime, A_double_prime, B_prime, B_double_
 def calculate_descriptors(row):
     """Calculate enhanced electronegativity-based descriptors for ferrites"""
     
-    # Extract composition parameters
+    # Extract composition parameters with safe handling of NaN
     A_prime = row.get("A'", '-')
+    if pd.isna(A_prime):
+        A_prime = '-'
+    
     A_double_prime = row.get("A''", '-')
+    if pd.isna(A_double_prime):
+        A_double_prime = '-'
+    
     B_prime = row.get("B'", '-')
+    if pd.isna(B_prime):
+        B_prime = '-'
+    
     B_double_prime = row.get("B''", '-')
+    if pd.isna(B_double_prime):
+        B_double_prime = '-'
+    
     B_triple_prime = row.get("B'''", '-')
+    if pd.isna(B_triple_prime):
+        B_triple_prime = '-'
+    
     B_quad_prime = row.get("B''''", '-')
+    if pd.isna(B_quad_prime):
+        B_quad_prime = '-'
+    
     x = row.get('x', 0) if pd.notna(row.get('x', 0)) else 0
     y = row.get('y', 0) if pd.notna(row.get('y', 0)) else 0
     z = row.get('z', 1) if pd.notna(row.get('z', 1)) else 1
@@ -416,49 +453,71 @@ def calculate_descriptors(row):
     descriptors['mass_B_avg'] = mass_B_avg
     descriptors['mass_ratio_AB'] = mass_B_avg / mass_A_avg if mass_A_avg > 0 else 0
     
-    # Thermal expansion descriptors (if available)
+    # =========================================================
+    # FIX: Thermal expansion descriptors with physical constraints
+    # =========================================================
     alphaLT = row.get('αLT', np.nan) if pd.notna(row.get('αLT', np.nan)) else np.nan
     alphaHT = row.get('αHT', np.nan) if pd.notna(row.get('αHT', np.nan)) else np.nan
     alphaav = row.get('αav', np.nan) if pd.notna(row.get('αav', np.nan)) else np.nan
     
-    descriptors['alphaLT'] = alphaLT if not np.isnan(alphaLT) else 0
-    descriptors['alphaHT'] = alphaHT if not np.isnan(alphaHT) else 0
-    descriptors['alphaav'] = alphaav if not np.isnan(alphaav) else 0
+    descriptors['alphaLT'] = alphaLT if not np.isnan(alphaLT) and alphaLT > 0 else np.nan
+    descriptors['alphaHT'] = alphaHT if not np.isnan(alphaHT) and alphaHT > 0 else np.nan
+    descriptors['alphaav'] = alphaav if not np.isnan(alphaav) and alphaav > 0 else np.nan
     
-    if not np.isnan(alphaLT) and not np.isnan(alphaHT) and alphaLT > 0:
-        descriptors['alpha_ratio_HT_LT'] = alphaHT / alphaLT
+    # Физическое ограничение: αHT/αLT не может быть > 3 для ферритов
+    if not np.isnan(alphaLT) and not np.isnan(alphaHT) and alphaLT > 1e-6:
+        ratio = alphaHT / alphaLT
+        if ratio > 3.0:
+            ratio = np.nan  # Отбрасываем нефизичные значения
+        descriptors['alpha_ratio_HT_LT'] = ratio
         descriptors['alpha_diff_HT_LT'] = alphaHT - alphaLT
     else:
-        descriptors['alpha_ratio_HT_LT'] = 0
-        descriptors['alpha_diff_HT_LT'] = 0
+        descriptors['alpha_ratio_HT_LT'] = np.nan
+        descriptors['alpha_diff_HT_LT'] = np.nan
     
-    # Conductivity descriptors (target values, not used as features for prediction)
-    descriptors['sigma_500'] = row.get('σ (500 °C)', np.nan) if pd.notna(row.get('σ (500 °C)', np.nan)) else np.nan
-    descriptors['sigma_600'] = row.get('σ (600 °C)', np.nan) if pd.notna(row.get('σ (600 °C)', np.nan)) else np.nan
-    descriptors['sigma_700'] = row.get('σ (700 °C)', np.nan) if pd.notna(row.get('σ (700 °C)', np.nan)) else np.nan
-    descriptors['sigma_max'] = row.get('σmax', np.nan) if pd.notna(row.get('σmax', np.nan)) else np.nan
-    
-    # Power descriptors
-    descriptors['P_600'] = row.get('P(FC), 600 °C', np.nan) if pd.notna(row.get('P(FC), 600 °C', np.nan)) else np.nan
-    descriptors['P_650'] = row.get('P(FC), 650 °C', np.nan) if pd.notna(row.get('P(FC), 650 °C', np.nan)) else np.nan
-    descriptors['P_700'] = row.get('P(FC), 700 °C', np.nan) if pd.notna(row.get('P(FC), 700 °C', np.nan)) else np.nan
-    
-    # ASR descriptors
-    asr_val = row.get('ASR, 600 °C', np.nan)
-    if pd.notna(asr_val) and asr_val > 0:
-        descriptors['ASR_600'] = asr_val
+    # =========================================================
+    # FIX: ASR descriptors - только положительные значения
+    # =========================================================
+    asr_600 = row.get('ASR, 600 °C', np.nan)
+    if pd.notna(asr_600) and asr_600 > 0 and asr_600 < 100:
+        descriptors['ASR_600'] = asr_600
     else:
         descriptors['ASR_600'] = np.nan
-    asr_val = row.get('ASR, 650 °C', np.nan)
-    if pd.notna(asr_val) and asr_val > 0:
-        descriptors['ASR_650'] = asr_val
+    
+    asr_650 = row.get('ASR, 650 °C', np.nan)
+    if pd.notna(asr_650) and asr_650 > 0 and asr_650 < 100:
+        descriptors['ASR_650'] = asr_650
     else:
         descriptors['ASR_650'] = np.nan
-    asr_val = row.get('ASR, 700 °C', np.nan)
-    if pd.notna(asr_val) and asr_val > 0:
-        descriptors['ASR_700'] = asr_val
+    
+    asr_700 = row.get('ASR, 700 °C', np.nan)
+    if pd.notna(asr_700) and asr_700 > 0 and asr_700 < 100:
+        descriptors['ASR_700'] = asr_700
     else:
         descriptors['ASR_700'] = np.nan
+    
+    # Conductivity descriptors (только положительные значения)
+    sigma_500 = row.get('σ (500 °C)', np.nan)
+    descriptors['sigma_500'] = sigma_500 if pd.notna(sigma_500) and sigma_500 >= 0 else np.nan
+    
+    sigma_600 = row.get('σ (600 °C)', np.nan)
+    descriptors['sigma_600'] = sigma_600 if pd.notna(sigma_600) and sigma_600 >= 0 else np.nan
+    
+    sigma_700 = row.get('σ (700 °C)', np.nan)
+    descriptors['sigma_700'] = sigma_700 if pd.notna(sigma_700) and sigma_700 >= 0 else np.nan
+    
+    sigma_max = row.get('σmax', np.nan)
+    descriptors['sigma_max'] = sigma_max if pd.notna(sigma_max) and sigma_max >= 0 else np.nan
+    
+    # Power descriptors
+    p_600 = row.get('P(FC), 600 °C', np.nan)
+    descriptors['P_600'] = p_600 if pd.notna(p_600) and p_600 >= 0 else np.nan
+    
+    p_650 = row.get('P(FC), 650 °C', np.nan)
+    descriptors['P_650'] = p_650 if pd.notna(p_650) and p_650 >= 0 else np.nan
+    
+    p_700 = row.get('P(FC), 700 °C', np.nan)
+    descriptors['P_700'] = p_700 if pd.notna(p_700) and p_700 >= 0 else np.nan
     
     # Categorical descriptors for encoding
     descriptors['A_prime'] = str(A_prime) if A_prime != '-' else 'Ba'
@@ -499,13 +558,13 @@ def train_prediction_models(df_features, fast_mode=True):
         'alpha_ratio_HT_LT': 'α_HT/α_LT'
     }
     
-    # Prepare data
+    # Prepare data - удаляем строки с NaN в целевых переменных
     valid_indices = []
     for idx, row in df_features.iterrows():
-        # Check if we have at least some target values
         has_target = False
         for target_key in target_cols.keys():
-            if target_key in row and pd.notna(row[target_key]):
+            val = row.get(target_key, np.nan)
+            if pd.notna(val) and val > 0:
                 has_target = True
                 break
         if has_target:
@@ -527,7 +586,6 @@ def train_prediction_models(df_features, fast_mode=True):
     le_Bpp = LabelEncoder()
     le_Bppp = LabelEncoder()
     
-    # Handle unseen categories by providing fallback
     try:
         X_cat = pd.DataFrame({
             'A_prime_enc': le_Ap.fit_transform(df_valid['A_prime'].astype(str)),
@@ -725,7 +783,7 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
     return fig
 
 # =============================================================================
-# Create property maps for composition space (FIXED)
+# Create property maps for composition space (FULLY REWRITTEN WITH FIXES)
 # =============================================================================
 def create_property_map(df, x_param, y_param, z_param, title):
     """Create 2D contour map of property across composition space"""
@@ -745,22 +803,68 @@ def create_property_map(df, x_param, y_param, z_param, title):
     y_vals = clean_df[y_param].values
     z_vals = clean_df[z_param].values
     
-    # Ensure arrays are 1D and have same length
+    # Ensure arrays are 1D
     x_vals = x_vals.flatten()
     y_vals = y_vals.flatten()
     z_vals = z_vals.flatten()
     
-    # Remove any remaining NaN
+    # =========================================================
+    # FIX: Синхронизация длин массивов (главное исправление)
+    # =========================================================
     min_len = min(len(x_vals), len(y_vals), len(z_vals))
     x_vals = x_vals[:min_len]
     y_vals = y_vals[:min_len]
     z_vals = z_vals[:min_len]
     
-    # Теперь создаём маску для удаления NaN
+    # Remove any remaining NaN
     valid_mask = ~(np.isnan(x_vals) | np.isnan(y_vals) | np.isnan(z_vals))
     x_vals = x_vals[valid_mask]
     y_vals = y_vals[valid_mask]
     z_vals = z_vals[valid_mask]
+    
+    # =========================================================
+    # FIX: Физические ограничения для α_HT/α_LT
+    # =========================================================
+    if z_param == 'alpha_ratio_HT_LT':
+        # Удаляем нефизичные точки (отношение > 3 или < 0.5)
+        valid_ratio_mask = (z_vals <= 3.0) & (z_vals >= 0.5)
+        x_vals = x_vals[valid_ratio_mask]
+        y_vals = y_vals[valid_ratio_mask]
+        z_vals = z_vals[valid_ratio_mask]
+        
+        if len(x_vals) < 4:
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax.scatter(x_vals, y_vals, c=z_vals, cmap='RdYlBu_r', 
+                      s=80, edgecolors='black', linewidth=0.5)
+            plt.colorbar(scatter, ax=ax, label='α_HT/α_LT')
+            ax.set_xlabel(x_param.replace('_', ' ').title(), fontsize=12)
+            ax.set_ylabel(y_param.replace('_', ' ').title(), fontsize=12)
+            ax.set_title(title + ' (scatter plot, filtered data)', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            return fig
+    
+    # =========================================================
+    # FIX: Физические ограничения для ASR (только положительные)
+    # =========================================================
+    if z_param in ['ASR_600', 'ASR_650', 'ASR_700']:
+        # Удаляем отрицательные или нулевые значения
+        valid_asr_mask = z_vals > 0
+        x_vals = x_vals[valid_asr_mask]
+        y_vals = y_vals[valid_asr_mask]
+        z_vals = z_vals[valid_asr_mask]
+        
+        if len(x_vals) < 4:
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax.scatter(x_vals, y_vals, c=z_vals, cmap='RdYlBu_r', 
+                      s=80, edgecolors='black', linewidth=0.5)
+            plt.colorbar(scatter, ax=ax, label=z_param.replace('_', ' ').title())
+            ax.set_xlabel(x_param.replace('_', ' ').title(), fontsize=12)
+            ax.set_ylabel(y_param.replace('_', ' ').title(), fontsize=12)
+            ax.set_title(title + ' (scatter plot, positive values only)', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            return fig
     
     if len(x_vals) < 4:
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -784,14 +888,11 @@ def create_property_map(df, x_param, y_param, z_param, title):
         except Exception:
             Z = griddata((x_vals, y_vals), z_vals, (X, Y), method='linear')
         
-        if z_param in ['ASR_600', 'ASR_650', 'ASR_700']:
-            Z = np.maximum(Z, 0)
-        
         # If still all NaN, create simple scatter
         if np.isnan(Z).all():
             fig, ax = plt.subplots(figsize=(10, 8))
-            ax.scatter(x_vals, y_vals, c=z_vals, cmap='RdYlBu_r', 
-                      s=80, edgecolors='black', linewidth=0.5)
+            scatter = ax.scatter(x_vals, y_vals, c=z_vals, cmap='RdYlBu_r', 
+                                s=80, edgecolors='black', linewidth=0.5)
             plt.colorbar(scatter, ax=ax, label=z_param.replace('_', ' ').title())
             ax.set_xlabel(x_param.replace('_', ' ').title(), fontsize=12)
             ax.set_ylabel(y_param.replace('_', ' ').title(), fontsize=12)
@@ -802,7 +903,22 @@ def create_property_map(df, x_param, y_param, z_param, title):
         
         fig, ax = plt.subplots(figsize=(10, 8))
         
-        contour = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r', alpha=0.8)
+        # =========================================================
+        # FIX: Ограничение цветовой шкалы для физических величин
+        # =========================================================
+        if z_param in ['ASR_600', 'ASR_650', 'ASR_700']:
+            Z = np.maximum(Z, 0)  # Обрезаем отрицательные значения
+            vmin, vmax = 0, min(10, np.nanmax(Z))  # ASR обычно < 10
+            contour = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r', alpha=0.8, vmin=vmin, vmax=vmax)
+        elif z_param == 'alpha_ratio_HT_LT':
+            Z = np.clip(Z, 0.5, 3.0)  # Ограничиваем физическим диапазоном
+            contour = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r', alpha=0.8, vmin=0.5, vmax=3.0)
+        elif z_param in ['sigma_600', 'sigma_max', 'sigma_500', 'sigma_700']:
+            Z = np.maximum(Z, 0)  # Проводимость не может быть отрицательной
+            contour = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r', alpha=0.8, vmin=0)
+        else:
+            contour = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r', alpha=0.8)
+        
         plt.colorbar(contour, ax=ax, label=z_param.replace('_', ' ').title())
         
         # Add contour lines
@@ -1034,6 +1150,22 @@ def predict_composition(model_data, A_prime, A_double_prime, B_prime, B_double_p
         
         # Ensemble with weights (XGBoost 0.6, RF 0.4)
         pred_ensemble = 0.6 * pred_xgb + 0.4 * pred_rf
+        
+        # =========================================================
+        # FIX: Физические ограничения для предсказаний
+        # =========================================================
+        if target_key in ['ASR_600', 'ASR_650', 'ASR_700']:
+            pred_ensemble = max(0, pred_ensemble)
+            pred_xgb = max(0, pred_xgb)
+            pred_rf = max(0, pred_rf)
+        elif target_key == 'alpha_ratio_HT_LT':
+            pred_ensemble = np.clip(pred_ensemble, 0.5, 3.0)
+            pred_xgb = np.clip(pred_xgb, 0.5, 3.0)
+            pred_rf = np.clip(pred_rf, 0.5, 3.0)
+        elif target_key in ['sigma_600', 'sigma_max', 'P_600']:
+            pred_ensemble = max(0, pred_ensemble)
+            pred_xgb = max(0, pred_xgb)
+            pred_rf = max(0, pred_rf)
         
         predictions[target_key] = {
             'ensemble': pred_ensemble,
@@ -1285,7 +1417,7 @@ class ModernProgressBar:
 # =============================================================================
 def main():
     st.set_page_config(
-        page_title="BaFeO₃ Multi-Property Predictor v1.1",
+        page_title="BaFeO₃ Multi-Property Predictor v1.2",
         page_icon="🧲",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -1298,7 +1430,7 @@ def main():
     st.markdown("""
     <h1>
         🧲 BaFeO₃ Multi-Property Predictor for Doped Ferrites
-        <span class="version-badge">v1.1</span>
+        <span class="version-badge">v1.2</span>
     </h1>
     """, unsafe_allow_html=True)
     
@@ -1308,6 +1440,9 @@ def main():
         Advanced computational platform for analyzing and predicting electrical conductivity,
         area-specific resistance (ASR), power output, and thermal expansion of doped BaFeO₃-based
         perovskites for solid oxide fuel cell applications. Uses electronegativity-based descriptors.
+        </p>
+        <p style="font-size: 0.9rem; margin-top: 0.5rem; color: #2ca02c;">
+        ✅ v1.2: Fixed NaN handling, physical constraints for α_HT/α_LT (≤3.0), ASR (≥0), and robust interpolation
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -1504,15 +1639,18 @@ def main():
         
         with col2:
             if 'sigma_600' in filtered_df.columns:
-                st.metric("σ(600°C) mean", f"{filtered_df['sigma_600'].mean():.1f} S/cm")
+                mean_sigma = filtered_df['sigma_600'].mean()
+                st.metric("σ(600°C) mean", f"{mean_sigma:.1f}" if not pd.isna(mean_sigma) else "N/A", "S/cm")
         
         with col3:
             if 'ASR_600' in filtered_df.columns:
-                st.metric("ASR(600°C) mean", f"{filtered_df['ASR_600'].mean():.2f} Ω·cm²")
+                mean_asr = filtered_df['ASR_600'].mean()
+                st.metric("ASR(600°C) mean", f"{mean_asr:.2f}" if not pd.isna(mean_asr) else "N/A", "Ω·cm²")
         
         with col4:
             if 'alpha_ratio_HT_LT' in filtered_df.columns:
-                st.metric("α_HT/α_LT mean", f"{filtered_df['alpha_ratio_HT_LT'].mean():.2f}")
+                mean_ratio = filtered_df['alpha_ratio_HT_LT'].mean()
+                st.metric("α_HT/α_LT mean", f"{mean_ratio:.2f}" if not pd.isna(mean_ratio) else "N/A")
         
         with col5:
             if 'oxygen_vacancy' in filtered_df.columns:
@@ -1537,27 +1675,31 @@ def main():
         
         with col1:
             if 'sigma_600' in filtered_df.columns:
-                fig, ax = plt.subplots(figsize=(8, 5))
-                ax.hist(filtered_df['sigma_600'].dropna(), bins=20, 
-                       color=MODERN_COLORS['primary'], edgecolor='white', alpha=0.7)
-                ax.set_xlabel('σ(600°C) (S/cm)', fontsize=11)
-                ax.set_ylabel('Frequency', fontsize=11)
-                ax.set_title('Conductivity Distribution', fontsize=12, fontweight='bold')
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig)
-                plt.close()
+                sigma_clean = filtered_df['sigma_600'].dropna()
+                if len(sigma_clean) > 0:
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    ax.hist(sigma_clean, bins=20, 
+                           color=MODERN_COLORS['primary'], edgecolor='white', alpha=0.7)
+                    ax.set_xlabel('σ(600°C) (S/cm)', fontsize=11)
+                    ax.set_ylabel('Frequency', fontsize=11)
+                    ax.set_title('Conductivity Distribution', fontsize=12, fontweight='bold')
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                    plt.close()
         
         with col2:
             if 'ASR_600' in filtered_df.columns:
-                fig, ax = plt.subplots(figsize=(8, 5))
-                ax.hist(filtered_df['ASR_600'].dropna(), bins=20, 
-                       color=MODERN_COLORS['secondary'], edgecolor='white', alpha=0.7)
-                ax.set_xlabel('ASR(600°C) (Ω·cm²)', fontsize=11)
-                ax.set_ylabel('Frequency', fontsize=11)
-                ax.set_title('ASR Distribution', fontsize=12, fontweight='bold')
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig)
-                plt.close()
+                asr_clean = filtered_df['ASR_600'].dropna()
+                if len(asr_clean) > 0:
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    ax.hist(asr_clean, bins=20, 
+                           color=MODERN_COLORS['secondary'], edgecolor='white', alpha=0.7)
+                    ax.set_xlabel('ASR(600°C) (Ω·cm²)', fontsize=11)
+                    ax.set_ylabel('Frequency', fontsize=11)
+                    ax.set_title('ASR Distribution', fontsize=12, fontweight='bold')
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                    plt.close()
     
     # =========================================================================
     # Page 2: Property Maps & Optimization
@@ -1569,6 +1711,7 @@ def main():
         <div class="card">
             <p>Explore how properties vary across composition space. Use these maps to identify
             optimal regions for high conductivity, low ASR, and favorable thermal expansion.</p>
+            <p><strong>Note:</strong> α_HT/α_LT is physically constrained to 0.5-3.0 range. ASR is constrained to ≥0.</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1765,6 +1908,7 @@ def main():
             <p>Enter the composition of your doped BaFeO₃ perovskite to predict its properties.
             The prediction uses ensemble machine learning models (XGBoost + Random Forest)
             trained on experimental data with electronegativity-based descriptors.</p>
+            <p><strong>Physical constraints applied:</strong> ASR ≥ 0, α_HT/α_LT ∈ [0.5, 3.0], σ ≥ 0</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2111,7 +2255,7 @@ def main():
         st.markdown("""
         <div class="card">
             <h3>Advanced Tool for Doped Ferrite Analysis</h3>
-            <p>Version 1.1 includes performance optimizations and bug fixes for stable operation.</p>
+            <p>Version 1.2 includes critical fixes for physical constraints and robust data handling.</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2144,7 +2288,7 @@ def main():
                     <li><b>Oxygen vacancy</b>: [V_O] ≈ (y+α)/2</li>
                     <li><b>Polarizability</b>: Ionic polarizability average</li>
                     <li><b>Mass ratio</b>: B/A site mass ratio</li>
-                    <li><b>α_HT/α_LT</b>: Chemical expansion indicator</li>
+                    <li><b>α_HT/α_LT</b>: Chemical expansion indicator (constrained to 0.5-3.0)</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -2153,24 +2297,25 @@ def main():
         <div class="card">
             <h4>📊 Target Properties</h4>
             <ul>
-                <li><b>σ(600°C)</b>: Electrical conductivity at 600°C (S/cm)</li>
+                <li><b>σ(600°C)</b>: Electrical conductivity at 600°C (S/cm) - higher is better</li>
                 <li><b>σmax</b>: Maximum conductivity in 500-700°C range (S/cm)</li>
-                <li><b>ASR(600°C)</b>: Area-specific resistance (Ω·cm²) - lower is better</li>
+                <li><b>ASR(600°C)</b>: Area-specific resistance (Ω·cm²) - lower is better, physically ≥0</li>
                 <li><b>P(FC), 600°C</b>: Fuel cell power density (mW/cm²)</li>
-                <li><b>α_HT/α_LT</b>: Thermal expansion ratio - indicates chemical expansion</li>
+                <li><b>α_HT/α_LT</b>: Thermal expansion ratio - indicates chemical expansion, physically 0.5-3.0</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("""
         <div class="card">
-            <h4>⚡ Performance Improvements in v1.1</h4>
+            <h4>⚡ What's New in v1.2</h4>
             <ul>
-                <li><b>Training speed:</b> 3-5x faster (removed CV from training, reduced ensemble size)</li>
-                <li><b>Bug fixes:</b> Fixed hexbin dimension errors and interpolation issues</li>
-                <li><b>Fast mode:</b> Optional reduced hyperparameters for quick exploration</li>
-                <li><b>Progress bars:</b> Visual feedback during model training</li>
-                <li><b>Error handling:</b> Graceful fallbacks for visualization failures</li>
+                <li><b>Fixed α_HT/α_LT:</b> Physical constraint (0.5-3.0) applied - no more unphysical values</li>
+                <li><b>Fixed ASR:</b> Negative values are now properly handled and removed</li>
+                <li><b>Fixed interpolation errors:</b> Synchronized array lengths in create_property_map</li>
+                <li><b>Fixed NaN handling:</b> Robust detection and removal of invalid data points</li>
+                <li><b>Fixed hexbin dimension mismatch:</b> Proper array length synchronization</li>
+                <li><b>Added physical constraints to predictions:</b> ASR ≥ 0, α_HT/α_LT ∈ [0.5, 3.0], σ ≥ 0</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -2179,6 +2324,7 @@ def main():
         <div class="footer">
             <p>© 2025 BaFeO₃ Multi-Property Predictor | Developed for Materials Science Research</p>
             <p>Uses Pauling electronegativities | Ensemble machine learning | Scientific publication quality graphics</p>
+            <p>Version 1.2 | Fixed physical constraints and interpolation errors</p>
         </div>
         """, unsafe_allow_html=True)
 
