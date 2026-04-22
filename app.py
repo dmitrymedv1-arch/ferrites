@@ -225,6 +225,13 @@ def load_uploaded_excel(uploaded_file):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
+        # Очистка ASR от отрицательных значений
+        asr_cols = ['ASR, 600 °C', 'ASR, 650 °C', 'ASR, 700 °C']
+        for col in asr_cols:
+            if col in df.columns:
+                df.loc[df[col] < 0, col] = np.nan
+                df.loc[df[col] > 1000, col] = np.nan
+        
         return df
     
     except Exception as e:
@@ -437,9 +444,21 @@ def calculate_descriptors(row):
     descriptors['P_700'] = row.get('P(FC), 700 °C', np.nan) if pd.notna(row.get('P(FC), 700 °C', np.nan)) else np.nan
     
     # ASR descriptors
-    descriptors['ASR_600'] = row.get('ASR, 600 °C', np.nan) if pd.notna(row.get('ASR, 600 °C', np.nan)) else np.nan
-    descriptors['ASR_650'] = row.get('ASR, 650 °C', np.nan) if pd.notna(row.get('ASR, 650 °C', np.nan)) else np.nan
-    descriptors['ASR_700'] = row.get('ASR, 700 °C', np.nan) if pd.notna(row.get('ASR, 700 °C', np.nan)) else np.nan
+    asr_val = row.get('ASR, 600 °C', np.nan)
+    if pd.notna(asr_val) and asr_val > 0:
+        descriptors['ASR_600'] = asr_val
+    else:
+        descriptors['ASR_600'] = np.nan
+    asr_val = row.get('ASR, 650 °C', np.nan)
+    if pd.notna(asr_val) and asr_val > 0:
+        descriptors['ASR_650'] = asr_val
+    else:
+        descriptors['ASR_650'] = np.nan
+    asr_val = row.get('ASR, 700 °C', np.nan)
+    if pd.notna(asr_val) and asr_val > 0:
+        descriptors['ASR_700'] = asr_val
+    else:
+        descriptors['ASR_700'] = np.nan
     
     # Categorical descriptors for encoding
     descriptors['A_prime'] = str(A_prime) if A_prime != '-' else 'Ba'
@@ -764,6 +783,9 @@ def create_property_map(df, x_param, y_param, z_param, title):
                 Z = griddata((x_vals, y_vals), z_vals, (X, Y), method='linear')
         except Exception:
             Z = griddata((x_vals, y_vals), z_vals, (X, Y), method='linear')
+        
+        if z_param in ['ASR_600', 'ASR_650', 'ASR_700']:
+            Z = np.maximum(Z, 0)
         
         # If still all NaN, create simple scatter
         if np.isnan(Z).all():
