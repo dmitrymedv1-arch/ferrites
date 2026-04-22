@@ -661,7 +661,7 @@ def train_prediction_models(df_features, fast_mode=True):
             n_jobs=-1,
             verbosity=0
         )
-        xgb_model.fit(X_scaled, y)
+        xgb_model.fit(X_scaled_sync, y)
         
         # Random Forest model (secondary, lighter)
         rf_model = RandomForestRegressor(
@@ -674,7 +674,7 @@ def train_prediction_models(df_features, fast_mode=True):
             random_state=42,
             n_jobs=-1
         )
-        rf_model.fit(X_scaled, y)
+        rf_model.fit(X_scaled_sync, y)
         
         models[target_key] = {
             'xgb': xgb_model,
