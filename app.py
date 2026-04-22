@@ -731,16 +731,39 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
         plt.tight_layout()
         return fig
     
+    # Reset index to ensure alignment and extract values
     clean_df = clean_df.reset_index(drop=True)
     
-    x_vals = clean_df[x_col].values
-    y_vals = clean_df[y_col].values
-    size_vals = clean_df[size_col].values
-    color_vals = clean_df[color_col].values
+    # Extract all values as numpy arrays
+    x_vals_raw = clean_df[x_col].values
+    y_vals_raw = clean_df[y_col].values
+    size_vals_raw = clean_df[size_col].values
+    color_vals_raw = clean_df[color_col].values
     
-    # Double-check lengths match
-    assert len(x_vals) == len(y_vals) == len(size_vals) == len(color_vals), \
-        f"Length mismatch: x={len(x_vals)}, y={len(y_vals)}, size={len(size_vals)}, color={len(color_vals)}"
+    # Find the minimum length among all arrays to ensure they match
+    min_len = min(len(x_vals_raw), len(y_vals_raw), len(size_vals_raw), len(color_vals_raw))
+    
+    # Trim all arrays to the same length
+    x_vals = x_vals_raw[:min_len]
+    y_vals = y_vals_raw[:min_len]
+    size_vals = size_vals_raw[:min_len]
+    color_vals = color_vals_raw[:min_len]
+    
+    # Additional check: remove any NaN values that might have survived
+    valid_mask = ~(np.isnan(x_vals) | np.isnan(y_vals) | np.isnan(size_vals) | np.isnan(color_vals))
+    x_vals = x_vals[valid_mask]
+    y_vals = y_vals[valid_mask]
+    size_vals = size_vals[valid_mask]
+    color_vals = color_vals[valid_mask]
+    
+    # Final safety check - if after all cleaning we have too few points
+    if len(x_vals) < 3:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.text(0.5, 0.5, f'Insufficient valid data for {title}\nNeed at least 3 points after cleaning', 
+                ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        return fig
     
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -752,10 +775,10 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
             y_vals_clean = y_vals[~np.isnan(y_vals)]
             
             # Trim to same length if needed
-            min_len = min(len(x_vals_clean), len(y_vals_clean))
-            if min_len >= 10:
-                x_vals_clean = x_vals_clean[:min_len]
-                y_vals_clean = y_vals_clean[:min_len]
+            min_len_clean = min(len(x_vals_clean), len(y_vals_clean))
+            if min_len_clean >= 10:
+                x_vals_clean = x_vals_clean[:min_len_clean]
+                y_vals_clean = y_vals_clean[:min_len_clean]
                 
                 hb = ax.hexbin(x_vals_clean, y_vals_clean, gridsize=20, 
                               cmap='Blues', alpha=0.3, mincnt=1)
@@ -770,7 +793,7 @@ def create_bubble_heatmap(df, x_col, y_col, size_col, color_col, title):
     else:
         sizes = np.full_like(size_vals, 100)
     
-    # Scatter plot with bubbles
+    # Scatter plot with bubbles - all arrays now guaranteed to have same length
     scatter = ax.scatter(x_vals, y_vals, s=sizes, c=color_vals, 
                         cmap='RdYlBu_r', alpha=0.7, edgecolors='black', linewidth=0.5)
     
